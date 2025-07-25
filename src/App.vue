@@ -37,7 +37,7 @@ const runDetection = async () => {
   formData.append('threshold', threshold.value);
 
   try {
-    const response = await fetch('http://ax-img-clip.dev.yiyiny.com/crop', {
+    const response = await fetch('https://ax-img-clip.dev.yiyiny.com/crop', {
       method: 'POST',
       body: formData,
     });
