@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 
 // Reactive state
 const file = ref(null);
@@ -10,6 +10,41 @@ const isLoading = ref(false);
 const error = ref('');
 const originalImage = ref(null);
 const imagePreview = ref(null);
+
+// Service domain state
+const serviceDomain = ref(''); // Currently selected/entered domain
+const domainList = ref([]); // List of saved domains for the dropdown
+
+// Load domains and last-used domain from localStorage on component mount
+onMounted(() => {
+  const savedDomains = JSON.parse(localStorage.getItem('domainList') || '[]');
+  const lastUsedDomain = localStorage.getItem('serviceDomain') || 'https://ax-img-clip.dev.yiyiny.com';
+
+  if (savedDomains.length > 0) {
+    domainList.value = savedDomains;
+  } else {
+    // Initialize with a default if the list is empty
+    domainList.value = [lastUsedDomain];
+  }
+  
+  // Set the current domain to the last one used
+  serviceDomain.value = lastUsedDomain;
+});
+
+// Watch for changes in the selected domain and save it as the last-used
+watch(serviceDomain, (newDomain) => {
+  if (newDomain) {
+    localStorage.setItem('serviceDomain', newDomain);
+  }
+});
+
+// Function to add the current domain to the list if it's new
+const addDomainToList = () => {
+  if (serviceDomain.value && !domainList.value.includes(serviceDomain.value)) {
+    domainList.value.push(serviceDomain.value);
+    localStorage.setItem('domainList', JSON.stringify(domainList.value));
+  }
+};
 
 // Trigger detection automatically when a file is selected
 const handleFileChange = (event) => {
@@ -32,12 +67,18 @@ const runDetection = async () => {
   error.value = '';
   results.value = [];
 
+  // Add the domain to the list before making the request
+  addDomainToList();
+
   const formData = new FormData();
   formData.append('file', file.value);
-  formData.append('threshold', threshold.value);
 
   try {
-    const response = await fetch('https://ax-img-clip.dev.yiyiny.com/crop', {
+    if (!serviceDomain.value) {
+      throw new Error('服务域名不能为空。');
+    }
+    let url = `${serviceDomain.value}/crop`;
+    const response = await fetch(`${url}?threshold=${threshold.value}`, {
       method: 'POST',
       body: formData,
     });
@@ -125,10 +166,22 @@ const downloadCrop = (bbox, index) => {
           {{ file ? '更换图片' : '选择图片' }}
         </label>
         <input id="file-upload" type="file" @change="handleFileChange" accept="image/*" />
+        
+        <button @click="runDetection" :disabled="!file || isLoading" class="refresh-btn">
+          刷新检测
+        </button>
 
         <div class="threshold-control">
           <label for="threshold">检测置信度阈值: {{ threshold }}</label>
           <input id="threshold" type="range" v-model.number="threshold" min="0.1" max="1" step="0.05" />
+        </div>
+        
+        <div class="domain-control">
+          <label for="service-domain">服务域名:</label>
+          <input id="service-domain" list="domain-list" v-model.trim="serviceDomain" placeholder="输入或选择域名" />
+          <datalist id="domain-list">
+            <option v-for="domain in domainList" :key="domain" :value="domain"></option>
+          </datalist>
         </div>
       </div>
 
@@ -136,7 +189,10 @@ const downloadCrop = (bbox, index) => {
         <div class="loader"></div>
         <span>检测中...</span>
       </div>
-      <div v-if="error" class="status-indicator error-message">{{ error }}</div>
+      <div v-if="error" class="status-indicator error-message">
+        <span>{{ error }}</span>
+        <button @click="runDetection" class="retry-btn">重试</button>
+      </div>
 
       <div v-if="imageUrl" class="results-area">
         <div class="image-display">
@@ -216,9 +272,10 @@ body {
 
 .controls {
   display: flex;
+  flex-wrap: wrap; /* Allow wrapping on smaller screens */
   justify-content: center;
   align-items: center;
-  gap: 2rem;
+  gap: 1.5rem; /* Adjusted gap */
   padding: 1.5rem;
   background-color: var(--white);
   border-radius: 8px;
@@ -237,17 +294,47 @@ input[type="file"] {
   cursor: pointer;
   font-weight: bold;
   transition: background-color 0.3s;
+  white-space: nowrap;
 }
 
 .file-upload-label:hover {
   background-color: #36a873;
 }
 
-.threshold-control {
+.refresh-btn {
+  background-color: var(--secondary-color);
+  color: var(--white);
+  padding: 12px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  border: none;
+  transition: background-color 0.3s;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background-color: #2c3e50;
+}
+
+.refresh-btn:disabled {
+  background-color: var(--light-gray);
+  cursor: not-allowed;
+}
+
+
+.threshold-control, .domain-control {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.5rem; /* Tighter gap for label and input */
   color: var(--secondary-color);
+}
+
+.domain-control input {
+  padding: 8px 12px;
+  border: 1px solid var(--light-gray);
+  border-radius: 5px;
+  min-width: 280px; /* Give it some base width */
+  font-size: 1em;
 }
 
 input[type="range"] {
@@ -262,12 +349,29 @@ input[type="range"] {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 0.5rem;
+  gap: 1rem; /* Increased gap */
 }
 
 .error-message {
   color: var(--danger-color);
   background-color: #fbecec;
+  justify-content: space-between; /* Space out text and button */
+}
+
+.retry-btn {
+  background-color: var(--primary-color);
+  color: var(--white);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.3s;
+  white-space: nowrap;
+}
+
+.retry-btn:hover {
+  background-color: #36a873;
 }
 
 .loader {
@@ -306,7 +410,8 @@ input[type="range"] {
 .image-preview-container {
   position: relative;
   max-width: 100%;
-  display: inline-block; /* Make container shrink to fit the image */
+  display: inline-block;
+  /* Make container shrink to fit the image */
 }
 
 .image-preview-container img {
@@ -419,7 +524,7 @@ input[type="range"] {
   color: #888;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 992px) { /* Adjusted breakpoint for better responsiveness */
   .results-area {
     grid-template-columns: 1fr;
   }
@@ -427,6 +532,11 @@ input[type="range"] {
   .controls {
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .domain-control input {
+    width: 100%;
+    min-width: unset;
   }
 }
 </style>
